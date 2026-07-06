@@ -206,6 +206,7 @@ def prepare_dataset(
     tokenizer_name: str,
     out_dir: Union[str, Path],
     num_partitions: int,
+    tokenizer_backend: str = "hf",
     val_fraction: float = 0.005,
     seed_fraction: float = 0.0,
     partition_val_fraction: float = 0.0,
@@ -232,29 +233,48 @@ def prepare_dataset(
     supposed to see a mixed sample drawn from all of D before branching.
     """
     import os
-    # Disable the fast-tokenizer's internal thread pool. Its parallelism is a
-    # known source of segfaults/hangs on long tokenization runs; single-threaded
-    # per batch is a little slower but reliable.
-    os.environ.setdefault("TOKENIZERS_PARALLELISM", "false")
-
-    from transformers import AutoTokenizer  # lazy: only data prep needs it
-    from transformers.utils import logging as hf_logging
     from tqdm import tqdm
-
-    # Silence the benign "N > 1024" length warning: we tokenize to a flat stream
-    # and cut our own seq_len chunks, so the tokenizer's own max length is moot.
-    hf_logging.set_verbosity_error()
 
     out_dir = Path(out_dir)
     out_dir.mkdir(parents=True, exist_ok=True)
 
-    tokenizer = AutoTokenizer.from_pretrained(tokenizer_name)
-    tokenizer.model_max_length = int(1e12)   # no implicit truncation / length warnings
-    vocab_size = len(tokenizer)
-    dtype = dtype_for_vocab(vocab_size)
+    # `encode_batch(list[str]) -> list[list[int]]` is set up per backend below.
+    if tokenizer_backend == "tiktoken":
+        # tiktoken's GPT-2 BPE is byte-for-byte compatible with HF "gpt2"
+        # (same 50257 vocab, same ids, eot=50256) but is far more stable — it
+        # does not have the native segfaults the HF Rust tokenizer can hit on
+        # long runs. This is what nanoGPT/llm.c use for FineWeb.
+        import tiktoken
+        enc = tiktoken.get_encoding(tokenizer_name)
+        vocab_size = enc.n_vocab
+        if eos_id is None:
+            eos_id = enc.eot_token
 
-    if eos_id is None:
-        eos_id = tokenizer.eos_token_id
+        def encode_batch(docs):
+            return enc.encode_ordinary_batch(docs)   # ignores special tokens
+
+    elif tokenizer_backend == "hf":
+        # Disable the fast-tokenizer's internal thread pool (a known source of
+        # segfaults/hangs on long runs); single-threaded is slower but safer.
+        os.environ.setdefault("TOKENIZERS_PARALLELISM", "false")
+        from transformers import AutoTokenizer  # lazy: only data prep needs it
+        from transformers.utils import logging as hf_logging
+        hf_logging.set_verbosity_error()         # silence the benign "N > 1024" warning
+        tokenizer = AutoTokenizer.from_pretrained(tokenizer_name)
+        tokenizer.model_max_length = int(1e12)   # no implicit truncation / length warnings
+        vocab_size = len(tokenizer)
+        if eos_id is None:
+            eos_id = tokenizer.eos_token_id
+
+        def encode_batch(docs):
+            return tokenizer(docs, add_special_tokens=False)["input_ids"]
+
+    else:
+        raise ValueError(
+            f"unknown tokenizer_backend {tokenizer_backend!r} (use 'hf' or 'tiktoken')"
+        )
+
+    dtype = dtype_for_vocab(vocab_size)
     if eos_id is None:
         raise ValueError(
             "tokenizer has no EOS token; pass eos_id explicitly (documents must be "
@@ -274,7 +294,7 @@ def prepare_dataset(
     def flush_batch() -> None:
         if not doc_buf:
             return
-        encoded = tokenizer(doc_buf, add_special_tokens=False)["input_ids"]
+        encoded = encode_batch(doc_buf)
         for ids, (kind, k, di) in zip(encoded, route_buf):
             if not ids:
                 continue

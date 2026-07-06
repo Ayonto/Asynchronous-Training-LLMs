@@ -5,6 +5,7 @@ numpy>=1.24
 # Data preparation only (tokenization). Not needed on a machine that only
 # trains from already-prepared .bin files.
 transformers>=4.40
+tiktoken>=0.7         # stable GPT-2 BPE for prep (avoids HF Rust-tokenizer segfaults)
 datasets>=2.19        # only needed for `hf:` dataset inputs in prepare_data.py
 
 # Progress bars in data prep / eval

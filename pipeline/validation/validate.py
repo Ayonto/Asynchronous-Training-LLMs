@@ -56,6 +56,8 @@ CONFIG = {
     # ---- data preparation -------------------------------------------------
     "hf_dataset": "hf:HuggingFaceFW/fineweb-edu:sample-10BT:train",
     "tokenizer": "gpt2",                     # family tokenizer (skeleton)
+    "tokenizer_backend": "tiktoken",         # 'tiktoken' (stable) or 'hf'; identical gpt2 ids
+
     "data_dir": "data/fineweb_val",
     "num_shards": 5,                         # partitions == shards (no seed)
     "prepare_max_tokens": 4_000_000_000,     # ~4B: plenty for 5 shards x ~2h, quick to prep
@@ -144,6 +146,7 @@ def prepare_if_needed(cfg: dict, family: FamilyConfig, data_dir: Path, log: Log)
             tokenizer_name=cfg["tokenizer"],
             out_dir=str(data_dir),
             num_partitions=cfg["num_shards"],
+            tokenizer_backend=cfg.get("tokenizer_backend", "hf"),
             val_fraction=cfg["val_fraction"],
             seed_fraction=0.0,                       # NO seed this run
             partition_val_fraction=cfg["partition_val_fraction"],

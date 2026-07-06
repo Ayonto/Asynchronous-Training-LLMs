@@ -57,6 +57,9 @@ def main() -> None:
     p.add_argument("--txt-mode", choices=["line", "file"], default="line")
     p.add_argument("--eos-id", type=int, default=None,
                    help="override document-separator token id if the tokenizer has no EOS")
+    p.add_argument("--tokenizer-backend", choices=["hf", "tiktoken"], default="hf",
+                   help="'tiktoken' uses a stable GPT-2 BPE (identical ids to HF gpt2) "
+                        "that avoids the HF Rust-tokenizer segfaults; needs `pip install tiktoken`")
     p.add_argument("--max-docs", type=int, default=None,
                    help="stop after this many documents")
     p.add_argument("--max-tokens", type=int, default=None,
@@ -71,6 +74,7 @@ def main() -> None:
         tokenizer_name=args.tokenizer,
         out_dir=args.out_dir,
         num_partitions=args.num_partitions,
+        tokenizer_backend=args.tokenizer_backend,
         val_fraction=args.val_fraction,
         seed_fraction=args.seed_fraction,
         partition_val_fraction=args.partition_val_fraction,
