@@ -216,6 +216,7 @@ def prepare_dataset(
     txt_mode: str = "line",
     eos_id: Optional[int] = None,
     max_docs: Optional[int] = None,
+    max_tokens: Optional[int] = None,
     encode_batch_docs: int = 512,
 ) -> dict:
     """Tokenize `inputs` and write:
@@ -278,7 +279,11 @@ def prepare_dataset(
         doc_buf.clear()
         route_buf.clear()
 
+    def total_tokens_written() -> int:
+        return sum(w.token_count for w in writers.values())
+
     n_docs = 0
+    stop = False
     for doc_index, input_index, text in tqdm(
         iter_documents(inputs, text_key=text_key, txt_mode=txt_mode),
         desc="tokenizing", unit=" docs",
@@ -288,10 +293,16 @@ def prepare_dataset(
         )
         doc_buf.append(text)
         route_buf.append((kind, k, doc_index))
+        n_docs += 1
         if len(doc_buf) >= encode_batch_docs:
             flush_batch()
-        n_docs += 1
+            # token cap is checked after a flush, so it stops within one batch
+            # (~encode_batch_docs documents) of the requested budget
+            if max_tokens is not None and total_tokens_written() >= max_tokens:
+                stop = True
         if max_docs is not None and n_docs >= max_docs:
+            stop = True
+        if stop:
             break
     flush_batch()
 
@@ -312,6 +323,7 @@ def prepare_dataset(
         "partition_val_fraction": partition_val_fraction,
         "routing_seed": seed,
         "total_documents": n_docs,
+        "total_tokens": total_tokens_written(),
         "files": files,
     }
     with open(out_dir / META_FILENAME, "w", encoding="utf-8") as f:
