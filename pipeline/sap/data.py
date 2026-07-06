@@ -217,6 +217,7 @@ def prepare_dataset(
     eos_id: Optional[int] = None,
     max_docs: Optional[int] = None,
     max_tokens: Optional[int] = None,
+    max_doc_chars: Optional[int] = 2_000_000,
     encode_batch_docs: int = 512,
 ) -> dict:
     """Tokenize `inputs` and write:
@@ -230,13 +231,25 @@ def prepare_dataset(
     The seed sample deliberately OVERLAPS the partitions: the seed model is
     supposed to see a mixed sample drawn from all of D before branching.
     """
+    import os
+    # Disable the fast-tokenizer's internal thread pool. Its parallelism is a
+    # known source of segfaults/hangs on long tokenization runs; single-threaded
+    # per batch is a little slower but reliable.
+    os.environ.setdefault("TOKENIZERS_PARALLELISM", "false")
+
     from transformers import AutoTokenizer  # lazy: only data prep needs it
+    from transformers.utils import logging as hf_logging
     from tqdm import tqdm
+
+    # Silence the benign "N > 1024" length warning: we tokenize to a flat stream
+    # and cut our own seq_len chunks, so the tokenizer's own max length is moot.
+    hf_logging.set_verbosity_error()
 
     out_dir = Path(out_dir)
     out_dir.mkdir(parents=True, exist_ok=True)
 
     tokenizer = AutoTokenizer.from_pretrained(tokenizer_name)
+    tokenizer.model_max_length = int(1e12)   # no implicit truncation / length warnings
     vocab_size = len(tokenizer)
     dtype = dtype_for_vocab(vocab_size)
 
@@ -291,6 +304,10 @@ def prepare_dataset(
         kind, k = route_document(
             doc_index, input_index, num_partitions, seed, val_fraction, mode, block_docs
         )
+        # truncate pathologically long documents (rare web-scraped junk) before
+        # tokenizing — a single multi-MB document can crash the native tokenizer
+        if max_doc_chars is not None and len(text) > max_doc_chars:
+            text = text[:max_doc_chars]
         doc_buf.append(text)
         route_buf.append((kind, k, doc_index))
         n_docs += 1

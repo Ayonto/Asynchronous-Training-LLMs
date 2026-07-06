@@ -57,7 +57,13 @@ def main() -> None:
     p.add_argument("--txt-mode", choices=["line", "file"], default="line")
     p.add_argument("--eos-id", type=int, default=None,
                    help="override document-separator token id if the tokenizer has no EOS")
-    p.add_argument("--max-docs", type=int, default=None)
+    p.add_argument("--max-docs", type=int, default=None,
+                   help="stop after this many documents")
+    p.add_argument("--max-tokens", type=int, default=None,
+                   help="stop after roughly this many total tokens (e.g. 4000000000 for 4B)")
+    p.add_argument("--max-doc-chars", type=int, default=2_000_000,
+                   help="truncate any single document longer than this many characters "
+                        "(guards the tokenizer against pathological giant web docs)")
     args = p.parse_args()
 
     meta = prepare_dataset(
@@ -75,6 +81,8 @@ def main() -> None:
         txt_mode=args.txt_mode,
         eos_id=args.eos_id,
         max_docs=args.max_docs,
+        max_tokens=args.max_tokens,
+        max_doc_chars=args.max_doc_chars,
     )
 
     print("\n=== dataset prepared ===")
