@@ -78,7 +78,8 @@ CONFIG = {
     "seq_len": 1024,
     "batch_size": 16,                        # lower to 12/8 if you hit OOM
     "grad_accum": 8,
-    "compile": True,
+    "compile": False,                        # torch.compile/Triton is fragile on freshly
+                                             # patched GPU drivers; turn on only once stable
     "checkpoint_every_min": 20,              # crash-safety cadence per shard
     "log_interval": 20,
     "eval_interval": 400,                    # quick val eval during training
