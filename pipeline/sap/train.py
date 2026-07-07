@@ -412,7 +412,10 @@ def run_training(cfg: TrainConfig) -> dict:
             idxs = sampler.next_batch()
             x, y = get_batch(tokens, idxs, seq_len, device)
             with amp:
-                _, loss = model(x, targets=y)
+                logits, loss = model(x, targets=y)
+            # free the (batch, seq, vocab) logits immediately — with a 50k vocab
+            # this tensor is ~GB-scale and only the scalar loss is needed here
+            del logits
             (loss / cfg.grad_accum).backward()
             step_loss += loss.item() / cfg.grad_accum
             tokens_seen += x.numel()
@@ -440,6 +443,11 @@ def run_training(cfg: TrainConfig) -> dict:
                              batch_size=cfg.batch_size,
                              max_batches=cfg.eval_batches, device=device)
             model.train()
+            if device.type == "cuda":
+                # eval allocates differently-shaped tensors than training;
+                # release them so the allocator doesn't fragment (fragmentation
+                # right after an eval is a classic near-ceiling OOM trigger)
+                torch.cuda.empty_cache()
             print(f"[{cfg.name}] step {step:>7} | VAL loss {r['loss']:.4f} | "
                   f"ppl {r['perplexity']:.2f}")
             log({"step": step, "val_loss": r["loss"], "val_ppl": r["perplexity"]})

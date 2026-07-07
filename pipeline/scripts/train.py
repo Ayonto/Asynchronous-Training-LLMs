@@ -25,8 +25,12 @@ python scripts/train.py --name shard_02 --family configs/family.json \
 """
 
 import argparse
+import os
 import sys
 from pathlib import Path
+
+# Reduce CUDA allocator fragmentation; must be set before torch initializes.
+os.environ.setdefault("PYTORCH_CUDA_ALLOC_CONF", "expandable_segments:True")
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 

@@ -30,11 +30,17 @@ the CLI uses.
 
 import argparse
 import datetime
+import gc
 import json
+import os
 import sys
 import time
 import traceback
 from pathlib import Path
+
+# Reduce CUDA allocator fragmentation ("reserved but unallocated" OOMs).
+# Must be set before torch initializes its allocator.
+os.environ.setdefault("PYTORCH_CUDA_ALLOC_CONF", "expandable_segments:True")
 
 REPO = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(REPO))
@@ -76,8 +82,12 @@ CONFIG = {
 
     # ---- training ---------------------------------------------------------
     "seq_len": 1024,
-    "batch_size": 16,                        # lower to 12/8 if you hit OOM
-    "grad_accum": 8,
+    # batch_size x grad_accum x seq_len = tokens per optimizer step (here 131k).
+    # batch_size sets PEAK GPU MEMORY; grad_accum trades speed for memory at
+    # identical math. 8x16 peaks ~10GB on 24GB cards (comfortable headroom);
+    # 16x8 peaked ~22GB and OOM'd on fragmentation. See GUIDELINE.md "Memory".
+    "batch_size": 8,
+    "grad_accum": 16,
     "compile": False,                        # torch.compile/Triton is fragile on freshly
                                              # patched GPU drivers; turn on only once stable
     "checkpoint_every_min": 20,              # crash-safety cadence per shard
@@ -278,6 +288,15 @@ def main() -> None:
             summary["shards"][name] = {"status": "failed", "error": str(e),
                                        "traceback": traceback.format_exc()}
             log(f"FAILED {name}: {e}  (continuing with remaining shards)")
+        finally:
+            # CRITICAL: a failed shard's exception traceback holds a reference
+            # cycle to its stack frames -> model/optimizer/activations stay
+            # alive on the GPU and every later shard OOMs instantly. Collect
+            # the cycles, then release the allocator cache, before the next
+            # shard builds its model.
+            gc.collect()
+            if device == "cuda":
+                torch.cuda.empty_cache()
         save_summary()
 
     # ---- Phase 3: merge ---------------------------------------------------
